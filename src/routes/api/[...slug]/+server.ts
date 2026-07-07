@@ -1,5 +1,40 @@
 import type { RequestHandler } from './$types';
+import { error } from '@sveltejs/kit';
 import { DIRECTUS_SERVER } from '$env/static/private';
+import { env } from '$env/dynamic/private';
+
+// Optional, opt-in path allowlist. Comma-separated list of path prefixes
+// (relative to the Directus root, no leading slash), e.g.
+//   DIRECTUS_PROXY_ALLOWLIST=items/,users/me,files
+// When unset the proxy allows every path — convenient for the demo's API
+// tester, but you should set an allowlist in production to shrink the blast
+// radius of the authenticated proxy.
+const PROXY_ALLOWLIST = (env.DIRECTUS_PROXY_ALLOWLIST ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+const isPathAllowed = (slug: string): boolean => {
+    if (PROXY_ALLOWLIST.length === 0) {
+        return true;
+    }
+    return PROXY_ALLOWLIST.some((prefix) => slug === prefix || slug.startsWith(prefix));
+};
+
+// Methods that can change server state and therefore need CSRF protection.
+const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+// Reject cross-site state-changing requests. The session cookie is now a
+// first-party SvelteKit cookie, so legitimate calls from this app always carry
+// an Origin matching our own. A mismatched (or, for state-changing methods,
+// absent) Origin means the request did not originate from this app.
+const isCsrfSafe = (event: Parameters<RequestHandler>[0]): boolean => {
+    if (!STATE_CHANGING_METHODS.has(event.request.method)) {
+        return true;
+    }
+    const origin = event.request.headers.get('origin');
+    return origin !== null && origin === event.url.origin;
+};
 
 const HOP_BY_HOP_HEADERS = new Set([
     'connection',
@@ -46,6 +81,14 @@ const filterResponseHeaders = (headers: Headers): Headers => {
 };
 
 const proxyRequest: RequestHandler = async (event) => {
+    if (!isCsrfSafe(event)) {
+        error(403, 'Cross-site request rejected');
+    }
+
+    if (!isPathAllowed(event.params.slug)) {
+        error(403, 'Path not allowed');
+    }
+
     const url = `${DIRECTUS_SERVER}/${event.params.slug}${event.url.search}`;
 
     const proxiedResponse = await event.fetch(url, {
