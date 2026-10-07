@@ -10,6 +10,8 @@
 	let response = $state<unknown>(null);
 	let error = $state<string | null>(null);
 	let loading = $state(false);
+	let isImage = $state(false);
+	let isPDF = $state(false);
 
 	const canHaveBody = $derived(method !== 'GET' && method !== 'DELETE');
 
@@ -36,11 +38,20 @@
 				body: parsedBody
 			});
 
-			const text = await res.text();
-			try {
-				response = JSON.parse(text);
-			} catch {
-				response = text;
+			const headers = res.headers.get('content-type');
+			console.log({ headers });
+			isImage = false;
+			isPDF = false;
+
+			if (headers?.includes('image/jpeg')) {
+				response = await res.blob();
+				isImage = true;
+			} else if (headers?.includes('application/pdf')) {
+				response = await res.blob();
+				isPDF = true;
+			} else {
+				response = await res.text();
+				response = JSON.parse(response as string);
 			}
 
 			if (!res.ok) {
@@ -137,7 +148,7 @@
 		<p class="mt-6 text-sm text-red-600">{error}</p>
 	{/if}
 
-	{#if response !== null}
+	{#if response !== null && !isImage && !isPDF}
 		<div class="mt-6">
 			<h2 class="mb-2 text-sm font-medium text-zinc-700">Response</h2>
 			<pre
@@ -145,6 +156,17 @@
 				'string'
 					? response
 					: JSON.stringify(response, null, 2)}</pre>
+		</div>
+	{/if}
+
+	{#if response !== null && isPDF}
+		<div class="mt-6">
+			<h2 class="mb-2 text-sm font-medium text-zinc-700">PDF</h2>
+			<iframe
+				title="PDF"
+				src={URL.createObjectURL(response as Blob)}
+				class="h-dvh w-full rounded-xl border border-zinc-200"
+			></iframe>
 		</div>
 	{/if}
 </div>
